@@ -104,7 +104,13 @@ class AppleMusicMonitorMacOS:
                 set trackDuration to duration of current track
                 set trackPosition to player position
 
-                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+                -- Tenta obter a URL do Apple Music
+                set appleURL to ""
+                try
+                    set appleURL to (get persistent ID of current track) as string
+                end try
+
+                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition & "|" & appleURL
             else
                 return ""
             end if
@@ -123,11 +129,14 @@ class AppleMusicMonitorMacOS:
                 duration_str = parts[3].replace(",", ".")
                 position_str = parts[4].replace(",", ".")
 
+                # URL do Apple Music (se disponível)
+                apple_music_url = parts[5] if len(parts) > 5 else None
+
                 track_info = TrackInfo(
                     title=parts[0] or "Unknown",
                     artist=parts[1] or "Unknown Artist",
                     album=parts[2] or "Unknown Album",
-                    artwork_url="embedded",  # Marcador para processar depois
+                    artwork_url=apple_music_url,  # Persistente ID
                     duration=int(float(duration_str)),
                     position=int(float(position_str))
                 )
@@ -254,7 +263,15 @@ class AppleMusicMonitorMacOS:
                     try
                         set albumName to album of currentTrack
                         set artistName to artist of currentTrack
-                        return "streaming|" & albumName & "|" & artistName
+                        set albumID to ""
+
+                        -- Tenta obter URL do Apple Music usando o store URL
+                        try
+                            set storeURL to (get store URL of currentTrack) as string
+                            return "streaming|" & albumName & "|" & artistName & "|" & storeURL
+                        end try
+
+                        return "streaming|" & albumName & "|" & artistName & "|"
                     end try
 
                     return "no_info"
@@ -303,13 +320,40 @@ class AppleMusicMonitorMacOS:
                     self.logger.info("🖼️  Capa estática salva")
                 return True
 
-        # Método 2: Streaming - tenta buscar via API do iTunes/Apple Music
+        # Método 2: Streaming - PRIORIZA API de capas animadas!
         elif info_result and info_result.startswith("streaming|"):
             parts = info_result.split("|")
             if len(parts) >= 3:
                 album = parts[1]
                 artist = parts[2]
+                apple_music_url = parts[3] if len(parts) > 3 else None
 
+                # ESTRATÉGIA 1: API de Capas Animadas (PRIORIDADE MÁXIMA!)
+                if prefer_animated and apple_music_url:
+                    self.logger.info(f"🎬 Tentando obter capa ANIMADA via API...")
+
+                    try:
+                        from animated_artwork_api import AnimatedArtworkAPI
+
+                        api = AnimatedArtworkAPI()
+                        animated_url = api.get_animated_artwork_url(apple_music_url)
+
+                        if animated_url:
+                            # Determina a extensão do arquivo animado
+                            animated_path = output_path.replace('.jpg', '.mov')
+
+                            if api.download_animated_artwork(animated_url, animated_path):
+                                self.logger.info(f"🎬✨ CAPA ANIMADA salva em: {animated_path}")
+
+                                # Também salva um frame estático como fallback
+                                self._extract_frame_from_video(animated_path, output_path)
+
+                                return True
+                    except Exception as e:
+                        self.logger.debug(f"Erro ao obter capa animada: {e}")
+                        self.logger.info("⏩ Fallback para busca estática...")
+
+                # ESTRATÉGIA 2: iTunes Search API (fallback para imagem estática)
                 import urllib.parse
                 import requests
 
@@ -325,7 +369,7 @@ class AppleMusicMonitorMacOS:
 
                 for search_term, strategy in search_strategies:
                     try:
-                        self.logger.info(f"Busca via API ({strategy}): {search_term}")
+                        self.logger.info(f"Busca via iTunes API ({strategy}): {search_term}")
 
                         query = urllib.parse.quote(search_term)
                         itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=5"
@@ -370,7 +414,7 @@ class AppleMusicMonitorMacOS:
                                             with open(output_path, 'wb') as f:
                                                 f.write(img_response.content)
 
-                                            self.logger.info(f"✨ Capa baixada via iTunes API ({strategy})")
+                                            self.logger.info(f"🖼️  Capa estática baixada via iTunes API ({strategy})")
                                             return True
                                         else:
                                             self.logger.debug(f"Erro ao baixar imagem: HTTP {img_response.status_code}")
@@ -381,37 +425,44 @@ class AppleMusicMonitorMacOS:
 
                 self.logger.warning(f"Nenhuma estratégia de busca teve sucesso para: {artist} - {album}")
 
-        # Método 3: Fallback - screenshot do player (último recurso)
-        self.logger.warning("Métodos anteriores falharam, tentando screenshot...")
+        # Método 3: Fallback - sem sucesso
+        self.logger.warning("Não foi possível obter artwork - métodos disponíveis esgotados")
+        return False
 
-        # Tenta capturar a janela do Music.app
+    def _extract_frame_from_video(self, video_path: str, output_path: str) -> bool:
+        """
+        Extrai um frame do vídeo para usar como thumbnail estático
+
+        Args:
+            video_path: Caminho do vídeo
+            output_path: Caminho para salvar o frame
+
+        Returns:
+            True se extraiu com sucesso
+        """
         try:
-            temp_screenshot = tempfile.mktemp(suffix='.png')
+            # Usa ffmpeg se disponível
+            import subprocess
 
-            script_screenshot = f'''
-            tell application "Music"
-                activate
-            end tell
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vframes', '1',
+                '-f', 'image2',
+                '-y',
+                output_path
+            ]
 
-            delay 0.5
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
 
-            tell application "System Events"
-                tell process "Music"
-                    set frontmost to true
-                    -- Captura a janela
-                end tell
-            end tell
-
-            do shell script "screencapture -l $(osascript -e 'tell app \\"Music\\" to id of window 1') '{temp_screenshot}'"
-            '''
-
-            # Não vamos usar screenshot por enquanto, é muito invasivo
-            self.logger.warning("Não foi possível obter artwork - métodos disponíveis esgotados")
-            return False
+            if result.returncode == 0:
+                self.logger.info(f"Frame estático extraído: {output_path}")
+                return True
 
         except Exception as e:
-            self.logger.error(f"Erro ao tentar screenshot: {e}")
-            return False
+            self.logger.debug(f"Não foi possível extrair frame: {e}")
+
+        return False
 
     def _save_artwork_by_index(self, output_path: str, index: int) -> bool:
         """

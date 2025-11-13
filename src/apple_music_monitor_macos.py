@@ -16,6 +16,7 @@ class TrackInfo:
     artwork_url: Optional[str] = None
     duration: int = 0
     position: int = 0
+    year: Optional[int] = None
 
     def __eq__(self, other):
         if not isinstance(other, TrackInfo):
@@ -103,6 +104,7 @@ class AppleMusicMonitorMacOS:
                 set trackAlbum to album of current track
                 set trackDuration to duration of current track
                 set trackPosition to player position
+                set trackYear to year of current track
 
                 -- Tenta obter a URL do Apple Music
                 set appleURL to ""
@@ -110,7 +112,7 @@ class AppleMusicMonitorMacOS:
                     set appleURL to (get persistent ID of current track) as string
                 end try
 
-                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition & "|" & appleURL
+                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition & "|" & appleURL & "|" & trackYear
             else
                 return ""
             end if
@@ -129,8 +131,9 @@ class AppleMusicMonitorMacOS:
                 duration_str = parts[3].replace(",", ".")
                 position_str = parts[4].replace(",", ".")
 
-                # URL do Apple Music (se disponível)
-                apple_music_url = parts[5] if len(parts) > 5 else None
+                # URL do Apple Music e ano (se disponíveis)
+                apple_music_url = parts[5] if len(parts) > 5 and parts[5] else None
+                year = parts[6] if len(parts) > 6 and parts[6] else None
 
                 track_info = TrackInfo(
                     title=parts[0] or "Unknown",
@@ -140,6 +143,11 @@ class AppleMusicMonitorMacOS:
                     duration=int(float(duration_str)),
                     position=int(float(position_str))
                 )
+
+                # Guarda o ano para usar na busca depois
+                if year and year != "0":
+                    track_info.year = int(year)
+
                 return track_info
 
         except Exception as e:
@@ -332,6 +340,11 @@ class AppleMusicMonitorMacOS:
                 artist = parts[2]
                 apple_music_url = parts[3] if len(parts) > 3 else None
 
+                # Pega informações da música atual para melhorar a busca
+                current_track = self.get_current_track()
+                track_title = current_track.title if current_track else ""
+                track_year = current_track.year if current_track and hasattr(current_track, 'year') else None
+
                 # ESTRATÉGIA 1: API de Capas Animadas (PRIORIDADE MÁXIMA!)
                 # Se não temos a URL do Apple Music, tentamos construir
                 if prefer_animated:
@@ -342,20 +355,20 @@ class AppleMusicMonitorMacOS:
                         import urllib.parse
                         import requests
 
-                        # Se não temos apple_music_url, precisamos buscar no iTunes para construir
+                        # Se não temos apple_music_url, constrói manualmente
                         if not apple_music_url or apple_music_url == "":
-                            self.logger.info("Buscando URL do Apple Music via iTunes API...")
+                            self.logger.info("Construindo URL do Apple Music...")
 
-                            # Busca no iTunes para obter o collectionViewUrl
-                            query = urllib.parse.quote(f"{artist} {album}")
-                            itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
+                            # Usa a API do Apple Music Catalog Search (sem autenticação)
+                            # Formato: https://music.apple.com/search?term=query
+                            search_term = f"{artist} {album}"
+                            search_url = f"https://music.apple.com/search?term={urllib.parse.quote(search_term)}"
 
-                            response = requests.get(itunes_api_url, timeout=5)
-                            if response.status_code == 200:
-                                data = response.json()
-                                if data.get('resultCount', 0) > 0:
-                                    apple_music_url = data['results'][0].get('collectionViewUrl', '')
-                                    self.logger.info(f"URL encontrada: {apple_music_url}")
+                            self.logger.info(f"URL de busca: {search_url}")
+
+                            # A API playlist-precis pode aceitar a URL de busca diretamente!
+                            # Vamos tentar com ela
+                            apple_music_url = search_url
 
                         # Se conseguimos a URL do Apple Music, tenta obter capa animada
                         if apple_music_url and apple_music_url != "":

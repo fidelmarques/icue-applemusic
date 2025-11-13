@@ -150,8 +150,14 @@ class AppleMusicMonitorMacOS:
         tell application "Music"
             if player state is playing then
                 try
-                    return count of artworks of current track
-                on error
+                    set artCount to count of artworks of current track
+                    if artCount is missing value then
+                        return 0
+                    else
+                        return artCount
+                    end if
+                on error errMsg
+                    log "Erro ao contar artworks: " & errMsg
                     return 0
                 end try
             else
@@ -162,8 +168,11 @@ class AppleMusicMonitorMacOS:
 
         result = self._run_applescript(script)
         try:
-            return int(result) if result else 0
-        except:
+            count = int(result) if result and result != "" else 0
+            self.logger.debug(f"Artwork count: {count}")
+            return count
+        except Exception as e:
+            self.logger.debug(f"Erro ao parsear contagem de artworks: {e}, resultado: '{result}'")
             return 0
 
     def has_animated_artwork(self) -> bool:
@@ -223,45 +232,46 @@ class AppleMusicMonitorMacOS:
         Returns:
             True se salvou com sucesso, False caso contrário
         """
-        # Verifica se tem capa animada
-        artwork_count = self.get_artwork_count()
-
-        if prefer_animated and artwork_count > 1:
-            # Tenta salvar todas as artworks (frames da animação)
-            self.logger.info(f"Salvando capa animada com {artwork_count} frames")
-
-            # Para animações, vamos salvar a primeira e última (para criar loop)
-            # Você pode modificar isso para salvar todas
-            for idx in [1, artwork_count]:
-                frame_path = output_path.replace(".jpg", f"_frame{idx}.jpg")
-                success = self._save_artwork_by_index(frame_path, idx)
-                if idx == 1 and success:
-                    # Copia o primeiro frame como o arquivo principal
-                    import shutil
-                    try:
-                        shutil.copy(frame_path, output_path)
-                    except:
-                        pass
-
-        # Salva a artwork principal (ou única se não for animada)
-        # AppleScript para salvar a artwork
-        script = f'''
+        # Método 1: Tentar usando comando 'do shell script' com sips
+        # Isso funciona melhor para capas animadas do Apple Music
+        script_sips = f'''
         tell application "Music"
             if player state is playing then
                 try
-                    set currentArtwork to artwork 1 of current track
-                    set artworkData to data of currentArtwork
-
-                    set theFile to open for access POSIX file "{output_path}" with write permission
-                    write artworkData to theFile
-                    close access theFile
-
-                    return "success"
-                on error errMsg
+                    set currentTrack to current track
+                    -- Tenta obter a URL da artwork (para streaming)
                     try
-                        close access POSIX file "{output_path}"
+                        set artworkURL to artwork URL of currentTrack
+                        if artworkURL is not missing value then
+                            do shell script "curl -s -o '{output_path}' '" & artworkURL & "'"
+                            return "success_url"
+                        end if
                     end try
-                    return "error: " & errMsg
+
+                    -- Fallback: tenta salvar artwork embarcada
+                    try
+                        set artCount to count of artworks of currentTrack
+                        if artCount > 0 then
+                            set currentArtwork to artwork 1 of currentTrack
+                            set artworkData to data of currentArtwork
+
+                            set theFile to open for access POSIX file "{output_path}" with write permission
+                            set eof of theFile to 0
+                            write artworkData to theFile
+                            close access theFile
+
+                            return "success_embedded"
+                        else
+                            return "error: no artwork available"
+                        end if
+                    on error embErr
+                        try
+                            close access POSIX file "{output_path}"
+                        end try
+                        return "error: " & embErr
+                    end try
+                on error mainErr
+                    return "error: " & mainErr
                 end try
             else
                 return "not playing"
@@ -269,17 +279,30 @@ class AppleMusicMonitorMacOS:
         end tell
         '''
 
-        result = self._run_applescript(script)
+        result = self._run_applescript(script_sips)
 
-        if result == "success":
-            # Log se é animada ou não
-            if artwork_count > 1:
-                self.logger.info(f"✨ Capa ANIMADA salva ({artwork_count} frames disponíveis)")
+        # Verifica se teve sucesso
+        if result and ("success" in result.lower()):
+            artwork_count = self.get_artwork_count()
+
+            if "url" in result.lower():
+                self.logger.info("✨ Capa baixada da URL do Apple Music (streaming)")
             else:
-                self.logger.info("🖼️  Capa estática salva")
+                if artwork_count > 1:
+                    self.logger.info(f"✨ Capa ANIMADA salva ({artwork_count} frames disponíveis)")
+                else:
+                    self.logger.info("🖼️  Capa estática salva")
+
+            # Tenta salvar frames adicionais se for animada
+            if prefer_animated and artwork_count > 1:
+                self.logger.info(f"Salvando frames adicionais ({artwork_count} total)")
+                for idx in [1, min(artwork_count, 30)]:  # Salva primeiro e meio
+                    frame_path = output_path.replace(".jpg", f"_frame{idx}.jpg")
+                    self._save_artwork_by_index(frame_path, idx)
+
             return True
         else:
-            self.logger.debug(f"Não foi possível salvar artwork: {result}")
+            self.logger.warning(f"Não foi possível salvar artwork: {result}")
             return False
 
     def _save_artwork_by_index(self, output_path: str, index: int) -> bool:

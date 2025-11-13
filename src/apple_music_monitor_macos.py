@@ -310,36 +310,76 @@ class AppleMusicMonitorMacOS:
                 album = parts[1]
                 artist = parts[2]
 
-                self.logger.info(f"Tentando buscar capa via API para: {artist} - {album}")
-
-                # Usa iTunes Search API (pública, sem autenticação)
                 import urllib.parse
-                query = urllib.parse.quote(f"{artist} {album}")
-                itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
+                import requests
 
-                try:
-                    import requests
-                    response = requests.get(itunes_api_url, timeout=5)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get('resultCount', 0) > 0:
-                            # Pega a URL da artwork (100x100 por padrão)
-                            artwork_url = data['results'][0].get('artworkUrl100', '')
+                # Tenta várias estratégias de busca
+                search_strategies = [
+                    # 1. Artista + Álbum
+                    (f"{artist} {album}", "artista + álbum"),
+                    # 2. Apenas artista (pega álbum mais recente)
+                    (artist, "apenas artista"),
+                    # 3. Artista sem caracteres especiais
+                    (artist.replace("Í", "I").replace("Á", "A"), "artista normalizado"),
+                ]
 
-                            if artwork_url:
-                                # Aumenta a resolução (substitui 100x100 por 1000x1000)
-                                artwork_url = artwork_url.replace('100x100', '1000x1000')
+                for search_term, strategy in search_strategies:
+                    try:
+                        self.logger.info(f"Busca via API ({strategy}): {search_term}")
 
-                                # Baixa a imagem
-                                img_response = requests.get(artwork_url, timeout=10)
-                                if img_response.status_code == 200:
-                                    with open(output_path, 'wb') as f:
-                                        f.write(img_response.content)
+                        query = urllib.parse.quote(search_term)
+                        itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=5"
 
-                                    self.logger.info("✨ Capa baixada via iTunes Search API")
-                                    return True
-                except Exception as e:
-                    self.logger.debug(f"Erro ao buscar via API: {e}")
+                        response = requests.get(itunes_api_url, timeout=5)
+                        if response.status_code == 200:
+                            data = response.json()
+
+                            self.logger.debug(f"API retornou {data.get('resultCount', 0)} resultados")
+
+                            if data.get('resultCount', 0) > 0:
+                                # Se buscou apenas artista, tenta encontrar o álbum correto
+                                best_match = None
+
+                                for result in data.get('results', []):
+                                    result_album = result.get('collectionName', '').lower()
+                                    result_artist = result.get('artistName', '').lower()
+
+                                    # Prioriza match exato do álbum
+                                    if album.lower() in result_album or result_album in album.lower():
+                                        best_match = result
+                                        self.logger.info(f"Match exato: {result_artist} - {result_album}")
+                                        break
+
+                                # Se não encontrou match exato, pega o primeiro resultado
+                                if not best_match and data['results']:
+                                    best_match = data['results'][0]
+                                    self.logger.info(f"Usando primeiro resultado: {best_match.get('artistName')} - {best_match.get('collectionName')}")
+
+                                if best_match:
+                                    artwork_url = best_match.get('artworkUrl100', '')
+
+                                    if artwork_url:
+                                        # Aumenta a resolução para 3000x3000 (máximo disponível)
+                                        artwork_url = artwork_url.replace('100x100bb.jpg', '3000x3000bb.jpg')
+
+                                        self.logger.info(f"Baixando artwork: {artwork_url}")
+
+                                        # Baixa a imagem
+                                        img_response = requests.get(artwork_url, timeout=10)
+                                        if img_response.status_code == 200:
+                                            with open(output_path, 'wb') as f:
+                                                f.write(img_response.content)
+
+                                            self.logger.info(f"✨ Capa baixada via iTunes API ({strategy})")
+                                            return True
+                                        else:
+                                            self.logger.debug(f"Erro ao baixar imagem: HTTP {img_response.status_code}")
+
+                    except Exception as e:
+                        self.logger.debug(f"Erro na estratégia '{strategy}': {e}")
+                        continue
+
+                self.logger.warning(f"Nenhuma estratégia de busca teve sucesso para: {artist} - {album}")
 
         # Método 3: Fallback - screenshot do player (último recurso)
         self.logger.warning("Métodos anteriores falharam, tentando screenshot...")

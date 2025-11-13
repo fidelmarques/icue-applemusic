@@ -8,7 +8,8 @@ Exiba a capa animada do que você está ouvindo no Apple Music diretamente na te
 
 ## ✨ Características
 
-- 🎨 **Capas Animadas**: Transições suaves com efeito fade in/out
+- ✨ **Suporte a Capas Animadas**: Detecta e prioriza Apple Music Animated Cover Art automaticamente!
+- 🎨 **Transições Suaves**: Efeito fade in/out entre músicas
 - 🔄 **Atualização Automática**: Detecta mudanças de música em tempo real
 - 🌐 **API REST**: Controle e monitore via HTTP
 - 💾 **Cache Inteligente**: Evita downloads desnecessários

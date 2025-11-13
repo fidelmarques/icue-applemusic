@@ -138,16 +138,112 @@ class AppleMusicMonitorMacOS:
 
         return None
 
-    def save_current_artwork(self, output_path: str) -> bool:
+    def get_artwork_count(self) -> int:
+        """
+        Retorna o número de artworks disponíveis para a música atual
+        (Músicas com capa animada geralmente têm múltiplas artworks)
+
+        Returns:
+            Número de artworks disponíveis
+        """
+        script = '''
+        tell application "Music"
+            if player state is playing then
+                try
+                    return count of artworks of current track
+                on error
+                    return 0
+                end try
+            else
+                return 0
+            end if
+        end tell
+        '''
+
+        result = self._run_applescript(script)
+        try:
+            return int(result) if result else 0
+        except:
+            return 0
+
+    def has_animated_artwork(self) -> bool:
+        """
+        Verifica se a música atual tem capa animada
+
+        Capas animadas geralmente:
+        - Têm múltiplas artworks (uma para cada frame)
+        - Ou são formatos como MOV, GIF
+
+        Returns:
+            True se tem capa animada
+        """
+        artwork_count = self.get_artwork_count()
+
+        # Se tem mais de 1 artwork, provavelmente é animada
+        if artwork_count > 1:
+            self.logger.info(f"Detectada capa animada: {artwork_count} frames")
+            return True
+
+        # Verifica o formato da artwork
+        script = '''
+        tell application "Music"
+            if player state is playing then
+                try
+                    set currentArtwork to artwork 1 of current track
+                    return format of currentArtwork as string
+                on error
+                    return "unknown"
+                end try
+            else
+                return "unknown"
+            end if
+        end tell
+        '''
+
+        result = self._run_applescript(script)
+
+        # Formatos animados conhecidos
+        animated_formats = ["MOV", "GIF", "APNG", "WEBP"]
+        is_animated = any(fmt.lower() in result.lower() for fmt in animated_formats)
+
+        if is_animated:
+            self.logger.info(f"Detectado formato animado: {result}")
+
+        return is_animated
+
+    def save_current_artwork(self, output_path: str, prefer_animated: bool = True) -> bool:
         """
         Salva a capa da música atual em um arquivo
+        PRIORIZA capas animadas sobre estáticas!
 
         Args:
             output_path: Caminho para salvar a imagem
+            prefer_animated: Se True, tenta salvar versão animada primeiro
 
         Returns:
             True se salvou com sucesso, False caso contrário
         """
+        # Verifica se tem capa animada
+        artwork_count = self.get_artwork_count()
+
+        if prefer_animated and artwork_count > 1:
+            # Tenta salvar todas as artworks (frames da animação)
+            self.logger.info(f"Salvando capa animada com {artwork_count} frames")
+
+            # Para animações, vamos salvar a primeira e última (para criar loop)
+            # Você pode modificar isso para salvar todas
+            for idx in [1, artwork_count]:
+                frame_path = output_path.replace(".jpg", f"_frame{idx}.jpg")
+                success = self._save_artwork_by_index(frame_path, idx)
+                if idx == 1 and success:
+                    # Copia o primeiro frame como o arquivo principal
+                    import shutil
+                    try:
+                        shutil.copy(frame_path, output_path)
+                    except:
+                        pass
+
+        # Salva a artwork principal (ou única se não for animada)
         # AppleScript para salvar a artwork
         script = f'''
         tell application "Music"
@@ -176,10 +272,53 @@ class AppleMusicMonitorMacOS:
         result = self._run_applescript(script)
 
         if result == "success":
+            # Log se é animada ou não
+            if artwork_count > 1:
+                self.logger.info(f"✨ Capa ANIMADA salva ({artwork_count} frames disponíveis)")
+            else:
+                self.logger.info("🖼️  Capa estática salva")
             return True
         else:
             self.logger.debug(f"Não foi possível salvar artwork: {result}")
             return False
+
+    def _save_artwork_by_index(self, output_path: str, index: int) -> bool:
+        """
+        Salva uma artwork específica por índice (para animações)
+
+        Args:
+            output_path: Caminho para salvar
+            index: Índice da artwork (1-based)
+
+        Returns:
+            True se salvou com sucesso
+        """
+        script = f'''
+        tell application "Music"
+            if player state is playing then
+                try
+                    set currentArtwork to artwork {index} of current track
+                    set artworkData to data of currentArtwork
+
+                    set theFile to open for access POSIX file "{output_path}" with write permission
+                    write artworkData to theFile
+                    close access theFile
+
+                    return "success"
+                on error errMsg
+                    try
+                        close access POSIX file "{output_path}"
+                    end try
+                    return "error: " & errMsg
+                end try
+            else
+                return "not playing"
+            end if
+        end tell
+        '''
+
+        result = self._run_applescript(script)
+        return result == "success"
 
     def get_player_info(self) -> Dict:
         """Retorna informações gerais do player"""
@@ -232,9 +371,22 @@ if __name__ == "__main__":
                 print(f"   Duração: {track.duration}s")
                 print(f"   Posição: {track.position}s")
 
+                # Verifica se tem capa animada
+                artwork_count = monitor.get_artwork_count()
+                is_animated = monitor.has_animated_artwork()
+
+                if is_animated or artwork_count > 1:
+                    print(f"   ✨ CAPA ANIMADA detectada! ({artwork_count} frames)")
+                else:
+                    print(f"   🖼️  Capa estática ({artwork_count} artwork)")
+
                 # Testa salvar artwork
                 if monitor.save_current_artwork("/tmp/test_artwork.jpg"):
                     print(f"   ✅ Artwork salva em /tmp/test_artwork.jpg")
+
+                    # Se tem frames adicionais, mostra
+                    if artwork_count > 1:
+                        print(f"   📁 Frames salvos: /tmp/test_artwork_frame*.jpg")
                 else:
                     print(f"   ⚠️  Não foi possível salvar artwork")
             else:

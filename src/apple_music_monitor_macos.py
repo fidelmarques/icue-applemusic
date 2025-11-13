@@ -346,7 +346,6 @@ class AppleMusicMonitorMacOS:
                 track_year = current_track.year if current_track and hasattr(current_track, 'year') else None
 
                 # ESTRATÉGIA 1: API de Capas Animadas (PRIORIDADE MÁXIMA!)
-                # Se não temos a URL do Apple Music, tentamos construir
                 if prefer_animated:
                     self.logger.info(f"🎬 Tentando obter capa ANIMADA via API...")
 
@@ -355,20 +354,50 @@ class AppleMusicMonitorMacOS:
                         import urllib.parse
                         import requests
 
-                        # Se não temos apple_music_url, constrói manualmente
+                        # Se não temos apple_music_url, busca via iTunes API para obter URL
                         if not apple_music_url or apple_music_url == "":
-                            self.logger.info("Construindo URL do Apple Music...")
+                            self.logger.info("Buscando URL do Apple Music via iTunes API...")
 
-                            # Usa a API do Apple Music Catalog Search (sem autenticação)
-                            # Formato: https://music.apple.com/search?term=query
-                            search_term = f"{artist} {album}"
-                            search_url = f"https://music.apple.com/search?term={urllib.parse.quote(search_term)}"
+                            # Monta query de busca melhorada com ano se disponível
+                            search_parts = [artist, album]
+                            if track_year and track_year > 0:
+                                search_parts.append(str(track_year))
 
-                            self.logger.info(f"URL de busca: {search_url}")
+                            search_term = " ".join(search_parts)
+                            query = urllib.parse.quote(search_term)
+                            itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=5"
 
-                            # A API playlist-precis pode aceitar a URL de busca diretamente!
-                            # Vamos tentar com ela
-                            apple_music_url = search_url
+                            self.logger.debug(f"Buscando: {search_term}")
+
+                            response = requests.get(itunes_api_url, timeout=5)
+                            if response.status_code == 200:
+                                data = response.json()
+
+                                if data.get('resultCount', 0) > 0:
+                                    # Procura o match mais preciso
+                                    best_match = None
+
+                                    for result in data.get('results', []):
+                                        result_album = result.get('collectionName', '').lower()
+                                        result_artist = result.get('artistName', '').lower()
+
+                                        # Match exato de álbum e artista
+                                        if (album.lower() in result_album or result_album in album.lower()) and \
+                                           (artist.lower() in result_artist or result_artist in artist.lower()):
+                                            best_match = result
+                                            self.logger.info(f"✓ Match encontrado: {result_artist} - {result_album}")
+                                            break
+
+                                    # Se não achou match exato, usa primeiro resultado
+                                    if not best_match and data['results']:
+                                        best_match = data['results'][0]
+                                        self.logger.debug(f"Usando primeiro resultado: {best_match.get('artistName')} - {best_match.get('collectionName')}")
+
+                                    # Extrai a URL do Apple Music da resposta
+                                    if best_match:
+                                        apple_music_url = best_match.get('collectionViewUrl', '')
+                                        if apple_music_url:
+                                            self.logger.info(f"🔗 URL do Apple Music: {apple_music_url}")
 
                         # Se conseguimos a URL do Apple Music, tenta obter capa animada
                         if apple_music_url and apple_music_url != "":

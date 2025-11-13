@@ -232,46 +232,34 @@ class AppleMusicMonitorMacOS:
         Returns:
             True se salvou com sucesso, False caso contrário
         """
-        # Método 1: Tentar usando comando 'do shell script' com sips
-        # Isso funciona melhor para capas animadas do Apple Music
-        script_sips = f'''
+        import os
+        import tempfile
+
+        # Para Apple Music streaming, usamos uma abordagem diferente
+        # Vamos construir a URL da capa baseado nas informações da música
+        script_get_info = '''
         tell application "Music"
             if player state is playing then
                 try
                     set currentTrack to current track
-                    -- Tenta obter a URL da artwork (para streaming)
+
+                    -- Primeiro, tenta salvar artwork diretamente (funciona para músicas locais)
                     try
-                        set artworkURL to artwork URL of currentTrack
-                        if artworkURL is not missing value then
-                            do shell script "curl -s -o '{output_path}' '" & artworkURL & "'"
-                            return "success_url"
+                        if (count of artworks of currentTrack) > 0 then
+                            return "has_artwork"
                         end if
                     end try
 
-                    -- Fallback: tenta salvar artwork embarcada
+                    -- Para streaming, tenta obter informações para construir URL
                     try
-                        set artCount to count of artworks of currentTrack
-                        if artCount > 0 then
-                            set currentArtwork to artwork 1 of currentTrack
-                            set artworkData to data of currentArtwork
-
-                            set theFile to open for access POSIX file "{output_path}" with write permission
-                            set eof of theFile to 0
-                            write artworkData to theFile
-                            close access theFile
-
-                            return "success_embedded"
-                        else
-                            return "error: no artwork available"
-                        end if
-                    on error embErr
-                        try
-                            close access POSIX file "{output_path}"
-                        end try
-                        return "error: " & embErr
+                        set albumName to album of currentTrack
+                        set artistName to artist of currentTrack
+                        return "streaming|" & albumName & "|" & artistName
                     end try
-                on error mainErr
-                    return "error: " & mainErr
+
+                    return "no_info"
+                on error errMsg
+                    return "error: " & errMsg
                 end try
             else
                 return "not playing"
@@ -279,30 +267,110 @@ class AppleMusicMonitorMacOS:
         end tell
         '''
 
-        result = self._run_applescript(script_sips)
+        info_result = self._run_applescript(script_get_info)
 
-        # Verifica se teve sucesso
-        if result and ("success" in result.lower()):
-            artwork_count = self.get_artwork_count()
+        # Método 1: Artwork embarcada (músicas locais)
+        if info_result == "has_artwork":
+            script_save = f'''
+            tell application "Music"
+                if player state is playing then
+                    try
+                        set currentArtwork to artwork 1 of current track
+                        set artworkData to data of currentArtwork
 
-            if "url" in result.lower():
-                self.logger.info("✨ Capa baixada da URL do Apple Music (streaming)")
-            else:
+                        set theFile to open for access POSIX file "{output_path}" with write permission
+                        set eof of theFile to 0
+                        write artworkData to theFile
+                        close access theFile
+
+                        return "success"
+                    on error errMsg
+                        try
+                            close access POSIX file "{output_path}"
+                        end try
+                        return "error: " & errMsg
+                    end try
+                end if
+            end tell
+            '''
+
+            result = self._run_applescript(script_save)
+            if result == "success":
+                artwork_count = self.get_artwork_count()
                 if artwork_count > 1:
-                    self.logger.info(f"✨ Capa ANIMADA salva ({artwork_count} frames disponíveis)")
+                    self.logger.info(f"✨ Capa ANIMADA salva ({artwork_count} frames)")
                 else:
                     self.logger.info("🖼️  Capa estática salva")
+                return True
 
-            # Tenta salvar frames adicionais se for animada
-            if prefer_animated and artwork_count > 1:
-                self.logger.info(f"Salvando frames adicionais ({artwork_count} total)")
-                for idx in [1, min(artwork_count, 30)]:  # Salva primeiro e meio
-                    frame_path = output_path.replace(".jpg", f"_frame{idx}.jpg")
-                    self._save_artwork_by_index(frame_path, idx)
+        # Método 2: Streaming - tenta buscar via API do iTunes/Apple Music
+        elif info_result and info_result.startswith("streaming|"):
+            parts = info_result.split("|")
+            if len(parts) >= 3:
+                album = parts[1]
+                artist = parts[2]
 
-            return True
-        else:
-            self.logger.warning(f"Não foi possível salvar artwork: {result}")
+                self.logger.info(f"Tentando buscar capa via API para: {artist} - {album}")
+
+                # Usa iTunes Search API (pública, sem autenticação)
+                import urllib.parse
+                query = urllib.parse.quote(f"{artist} {album}")
+                itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
+
+                try:
+                    import requests
+                    response = requests.get(itunes_api_url, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('resultCount', 0) > 0:
+                            # Pega a URL da artwork (100x100 por padrão)
+                            artwork_url = data['results'][0].get('artworkUrl100', '')
+
+                            if artwork_url:
+                                # Aumenta a resolução (substitui 100x100 por 1000x1000)
+                                artwork_url = artwork_url.replace('100x100', '1000x1000')
+
+                                # Baixa a imagem
+                                img_response = requests.get(artwork_url, timeout=10)
+                                if img_response.status_code == 200:
+                                    with open(output_path, 'wb') as f:
+                                        f.write(img_response.content)
+
+                                    self.logger.info("✨ Capa baixada via iTunes Search API")
+                                    return True
+                except Exception as e:
+                    self.logger.debug(f"Erro ao buscar via API: {e}")
+
+        # Método 3: Fallback - screenshot do player (último recurso)
+        self.logger.warning("Métodos anteriores falharam, tentando screenshot...")
+
+        # Tenta capturar a janela do Music.app
+        try:
+            temp_screenshot = tempfile.mktemp(suffix='.png')
+
+            script_screenshot = f'''
+            tell application "Music"
+                activate
+            end tell
+
+            delay 0.5
+
+            tell application "System Events"
+                tell process "Music"
+                    set frontmost to true
+                    -- Captura a janela
+                end tell
+            end tell
+
+            do shell script "screencapture -l $(osascript -e 'tell app \\"Music\\" to id of window 1') '{temp_screenshot}'"
+            '''
+
+            # Não vamos usar screenshot por enquanto, é muito invasivo
+            self.logger.warning("Não foi possível obter artwork - métodos disponíveis esgotados")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Erro ao tentar screenshot: {e}")
             return False
 
     def _save_artwork_by_index(self, output_path: str, index: int) -> bool:

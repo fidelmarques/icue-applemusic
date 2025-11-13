@@ -263,15 +263,19 @@ class AppleMusicMonitorMacOS:
                     try
                         set albumName to album of currentTrack
                         set artistName to artist of currentTrack
-                        set albumID to ""
 
-                        -- Tenta obter URL do Apple Music usando o store URL
+                        -- Tenta obter URL do Apple Music
+                        set storeURL to ""
                         try
-                            set storeURL to (get store URL of currentTrack) as string
-                            return "streaming|" & albumName & "|" & artistName & "|" & storeURL
+                            -- Usa as propriedades disponíveis no Music.app
+                            set storeURL to (location of currentTrack) as string
                         end try
 
-                        return "streaming|" & albumName & "|" & artistName & "|"
+                        if storeURL is not "" then
+                            return "streaming|" & albumName & "|" & artistName & "|" & storeURL
+                        else
+                            return "streaming|" & albumName & "|" & artistName & "|"
+                        end if
                     end try
 
                     return "no_info"
@@ -329,26 +333,49 @@ class AppleMusicMonitorMacOS:
                 apple_music_url = parts[3] if len(parts) > 3 else None
 
                 # ESTRATÉGIA 1: API de Capas Animadas (PRIORIDADE MÁXIMA!)
-                if prefer_animated and apple_music_url:
+                # Se não temos a URL do Apple Music, tentamos construir
+                if prefer_animated:
                     self.logger.info(f"🎬 Tentando obter capa ANIMADA via API...")
 
                     try:
                         from animated_artwork_api import AnimatedArtworkAPI
+                        import urllib.parse
+                        import requests
 
-                        api = AnimatedArtworkAPI()
-                        animated_url = api.get_animated_artwork_url(apple_music_url)
+                        # Se não temos apple_music_url, precisamos buscar no iTunes para construir
+                        if not apple_music_url or apple_music_url == "":
+                            self.logger.info("Buscando URL do Apple Music via iTunes API...")
 
-                        if animated_url:
-                            # Determina a extensão do arquivo animado
-                            animated_path = output_path.replace('.jpg', '.mov')
+                            # Busca no iTunes para obter o collectionViewUrl
+                            query = urllib.parse.quote(f"{artist} {album}")
+                            itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
 
-                            if api.download_animated_artwork(animated_url, animated_path):
-                                self.logger.info(f"🎬✨ CAPA ANIMADA salva em: {animated_path}")
+                            response = requests.get(itunes_api_url, timeout=5)
+                            if response.status_code == 200:
+                                data = response.json()
+                                if data.get('resultCount', 0) > 0:
+                                    apple_music_url = data['results'][0].get('collectionViewUrl', '')
+                                    self.logger.info(f"URL encontrada: {apple_music_url}")
 
-                                # Também salva um frame estático como fallback
-                                self._extract_frame_from_video(animated_path, output_path)
+                        # Se conseguimos a URL do Apple Music, tenta obter capa animada
+                        if apple_music_url and apple_music_url != "":
+                            api = AnimatedArtworkAPI()
+                            animated_url = api.get_animated_artwork_url(apple_music_url)
 
-                                return True
+                            if animated_url:
+                                # Determina a extensão do arquivo animado
+                                animated_path = output_path.replace('.jpg', '.mov')
+
+                                if api.download_animated_artwork(animated_url, animated_path):
+                                    self.logger.info(f"🎬✨ CAPA ANIMADA salva em: {animated_path}")
+
+                                    # Também salva um frame estático como fallback
+                                    self._extract_frame_from_video(animated_path, output_path)
+
+                                    return True
+                        else:
+                            self.logger.debug("Não foi possível obter URL do Apple Music")
+
                     except Exception as e:
                         self.logger.debug(f"Erro ao obter capa animada: {e}")
                         self.logger.info("⏩ Fallback para busca estática...")

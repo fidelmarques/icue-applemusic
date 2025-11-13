@@ -119,13 +119,17 @@ class AppleMusicMonitorMacOS:
         try:
             parts = result.split("|")
             if len(parts) >= 5:
+                # Substitui vírgula por ponto para locales diferentes
+                duration_str = parts[3].replace(",", ".")
+                position_str = parts[4].replace(",", ".")
+
                 track_info = TrackInfo(
                     title=parts[0] or "Unknown",
                     artist=parts[1] or "Unknown Artist",
                     album=parts[2] or "Unknown Album",
                     artwork_url="embedded",  # Marcador para processar depois
-                    duration=int(float(parts[3])),
-                    position=int(float(parts[4]))
+                    duration=int(float(duration_str)),
+                    position=int(float(position_str))
                 )
                 return track_info
 

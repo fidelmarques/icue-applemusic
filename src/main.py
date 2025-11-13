@@ -6,10 +6,16 @@ import os
 import sys
 import time
 import threading
+import platform
 from pathlib import Path
 from typing import Optional
 
-from apple_music_monitor import AppleMusicMonitor, TrackInfo
+# Importa o monitor apropriado baseado no sistema operacional
+if platform.system() == "Darwin":  # macOS
+    from apple_music_monitor_macos import AppleMusicMonitorMacOS as AppleMusicMonitor, TrackInfo
+else:  # Windows
+    from apple_music_monitor import AppleMusicMonitor, TrackInfo
+
 from image_processor import ImageProcessor
 from icue_controller import ICueController, MockICueController
 
@@ -43,7 +49,8 @@ class AppleMusicICueSync:
         # Inicializa componentes
         try:
             self.music_monitor = AppleMusicMonitor()
-            self.logger.info("✅ Monitor do Apple Music inicializado")
+            system_name = "macOS" if platform.system() == "Darwin" else "Windows"
+            self.logger.info(f"✅ Monitor do Apple Music inicializado ({system_name})")
         except Exception as e:
             self.logger.error(f"❌ Erro ao inicializar monitor do Apple Music: {e}")
             raise

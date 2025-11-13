@@ -3,7 +3,7 @@
 Exiba a capa animada do que você está ouvindo no Apple Music diretamente na tela LCD do seu water cooler Corsair H150i Elite LCD XT!
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ## ✨ Características
@@ -13,19 +13,23 @@ Exiba a capa animada do que você está ouvindo no Apple Music diretamente na te
 - 🌐 **API REST**: Controle e monitore via HTTP
 - 💾 **Cache Inteligente**: Evita downloads desnecessários
 - 🎯 **Fácil de Usar**: Configure e rode em minutos
-- 🔌 **Integração Nativa**: Usa iTunes COM API no Windows
+- 🔌 **Integração Nativa**: iTunes COM API (Windows) ou AppleScript (macOS)
+- 🖥️ **Multi-plataforma**: Funciona no Windows e macOS
 
 ## 📋 Requisitos
 
 ### Hardware
 - **Corsair H150i Elite LCD XT** (ou outro dispositivo Corsair com LCD de 480x480)
-- **Windows 10/11**
+- **Windows 10/11** (para uso em produção)
+- **macOS** (apenas para desenvolvimento e testes)
 
 ### Software
 - **Python 3.8+**
-- **Apple Music / iTunes** instalado no Windows
-- **Corsair iCUE** instalado e rodando
-- **iCUE SDK** instalado
+- **Apple Music / iTunes** instalado
+- **Corsair iCUE** instalado e rodando (apenas Windows)
+- **iCUE SDK** instalado (apenas Windows)
+
+> **💡 Nota para macOS**: Você pode desenvolver e testar tudo no macOS usando o modo mock! Veja [README_MACOS.md](README_MACOS.md) para instruções detalhadas.
 
 ## 🚀 Instalação
 
@@ -79,10 +83,18 @@ USE_MOCK_ICUE=False
 
 ### Modo Standalone
 
-Execute diretamente para sincronizar as capas:
-
+**No Windows:**
 ```bash
 python run.py
+# Ou use o script .bat
+start.bat
+```
+
+**No macOS (modo mock para testes):**
+```bash
+./run_macos.sh
+# Ou diretamente
+python3 run.py
 ```
 
 Isso iniciará o monitor que:
@@ -145,6 +157,27 @@ curl -X POST http://localhost:5000/config \
 curl http://localhost:5000/health
 ```
 
+## 🍎 Testando no macOS
+
+O projeto pode ser **totalmente testado no macOS** em modo mock!
+
+```bash
+# Teste rápido do monitor
+./test_macos.sh
+
+# Aplicação completa em modo mock
+./run_macos.sh
+```
+
+**O que funciona no macOS:**
+- ✅ Monitor do Apple Music (via AppleScript nativo)
+- ✅ Processamento de imagens
+- ✅ Animações fade (simuladas)
+- ✅ API REST completa
+- ❌ Exibição no LCD real (requer Windows + hardware)
+
+📖 **Guia completo:** [README_MACOS.md](README_MACOS.md)
+
 ## 🛠️ Desenvolvimento
 
 ### Estrutura do Projeto
@@ -153,18 +186,21 @@ curl http://localhost:5000/health
 icue-applemusic/
 ├── src/
 │   ├── __init__.py
-│   ├── apple_music_monitor.py  # Monitor do Apple Music
-│   ├── image_processor.py      # Processamento de imagens
-│   ├── icue_controller.py      # Controle do iCUE SDK
-│   ├── main.py                 # Aplicação principal
-│   └── api.py                  # Servidor REST API
-├── cache/                      # Cache de imagens
-├── logs/                       # Arquivos de log
-├── .env                        # Configurações
-├── requirements.txt            # Dependências Python
-├── run.py                      # Script standalone
-├── run_api.py                  # Script API server
-└── README.md
+│   ├── apple_music_monitor.py       # Monitor Windows (COM API)
+│   ├── apple_music_monitor_macos.py # Monitor macOS (AppleScript)
+│   ├── image_processor.py           # Processamento de imagens
+│   ├── icue_controller.py           # Controle do iCUE SDK
+│   ├── main.py                      # Aplicação principal
+│   └── api.py                       # Servidor REST API
+├── cache/                           # Cache de imagens
+├── logs/                            # Arquivos de log
+├── .env                             # Configurações
+├── requirements.txt                 # Dependências Python
+├── run.py / run_api.py              # Scripts Python
+├── start.bat / start_api.bat        # Scripts Windows
+├── run_macos.sh / test_macos.sh     # Scripts macOS
+├── README.md                        # Documentação principal
+└── README_MACOS.md                  # Guia para macOS
 ```
 
 ### Testes sem Hardware

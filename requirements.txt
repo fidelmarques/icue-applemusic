@@ -1,7 +1,11 @@
 Flask==3.0.0
 Pillow==10.1.0
 requests==2.31.0
-pywin32==306
-cuesdk==1.0.0
 python-dotenv==1.0.0
 watchdog==3.0.0
+
+# Windows only dependencies
+pywin32==306; sys_platform == 'win32'
+
+# iCUE SDK - Opcional, use mock para desenvolvimento
+# cuesdk==1.0.0

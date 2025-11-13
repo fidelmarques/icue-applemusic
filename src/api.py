@@ -3,6 +3,7 @@ API REST para monitoramento e controle
 """
 import logging
 import os
+import platform
 import threading
 from flask import Flask, jsonify, request, send_file
 from dotenv import load_dotenv

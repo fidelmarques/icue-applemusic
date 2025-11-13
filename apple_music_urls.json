@@ -1,0 +1,5 @@
+{
+  "_comment": "Cache manual de URLs do Apple Music para álbuns não encontrados automaticamente",
+  "_format": "artist|album (lowercase) -> apple music url",
+  "rosalía|lux": "https://music.apple.com/br/album/lux/1848167516"
+}

@@ -353,51 +353,76 @@ class AppleMusicMonitorMacOS:
                         from animated_artwork_api import AnimatedArtworkAPI
                         import urllib.parse
                         import requests
+                        import json
+                        import os
 
-                        # Se não temos apple_music_url, busca via iTunes API para obter URL
+                        # Se não temos apple_music_url, tenta obter
                         if not apple_music_url or apple_music_url == "":
-                            self.logger.info("Buscando URL do Apple Music via iTunes API...")
+                            # CACHE MANUAL: Verifica se existe mapeamento manual primeiro
+                            cache_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'apple_music_urls.json')
+                            cache_key = f"{artist}|{album}".lower()
 
-                            # Monta query de busca melhorada com ano se disponível
-                            search_parts = [artist, album]
-                            if track_year and track_year > 0:
-                                search_parts.append(str(track_year))
+                            if os.path.exists(cache_file):
+                                try:
+                                    with open(cache_file, 'r', encoding='utf-8') as f:
+                                        url_cache = json.load(f)
+                                        if cache_key in url_cache:
+                                            apple_music_url = url_cache[cache_key]
+                                            self.logger.info(f"📍 URL encontrada no cache manual: {apple_music_url}")
+                                except Exception as e:
+                                    self.logger.debug(f"Erro ao ler cache: {e}")
 
-                            search_term = " ".join(search_parts)
-                            query = urllib.parse.quote(search_term)
-                            itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=5"
+                            # Se não achou no cache, busca via iTunes API
+                            if not apple_music_url or apple_music_url == "":
+                                self.logger.info("Buscando URL do Apple Music via iTunes API...")
 
-                            self.logger.debug(f"Buscando: {search_term}")
+                                # Monta query de busca melhorada com ano se disponível
+                                search_parts = [artist, album]
+                                if track_year and track_year > 0:
+                                    search_parts.append(str(track_year))
 
-                            response = requests.get(itunes_api_url, timeout=5)
-                            if response.status_code == 200:
-                                data = response.json()
+                                search_term = " ".join(search_parts)
+                                query = urllib.parse.quote(search_term)
+                                itunes_api_url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=5"
 
-                                if data.get('resultCount', 0) > 0:
-                                    # Procura o match mais preciso
-                                    best_match = None
+                                self.logger.debug(f"Buscando: {search_term}")
 
-                                    for result in data.get('results', []):
-                                        result_album = result.get('collectionName', '').lower()
-                                        result_artist = result.get('artistName', '').lower()
+                                response = requests.get(itunes_api_url, timeout=5)
+                                if response.status_code == 200:
+                                    data = response.json()
 
-                                        # Match exato de álbum e artista
-                                        if (album.lower() in result_album or result_album in album.lower()) and \
-                                           (artist.lower() in result_artist or result_artist in artist.lower()):
-                                            best_match = result
-                                            self.logger.info(f"✓ Match encontrado: {result_artist} - {result_album}")
-                                            break
+                                    if data.get('resultCount', 0) > 0:
+                                        # Procura o match mais preciso
+                                        best_match = None
 
-                                    # Se não achou match exato, usa primeiro resultado
-                                    if not best_match and data['results']:
-                                        best_match = data['results'][0]
-                                        self.logger.debug(f"Usando primeiro resultado: {best_match.get('artistName')} - {best_match.get('collectionName')}")
+                                        for result in data.get('results', []):
+                                            result_album = result.get('collectionName', '').lower()
+                                            result_artist = result.get('artistName', '').lower()
 
-                                    # Extrai a URL do Apple Music da resposta
-                                    if best_match:
-                                        apple_music_url = best_match.get('collectionViewUrl', '')
-                                        if apple_music_url:
-                                            self.logger.info(f"🔗 URL do Apple Music: {apple_music_url}")
+                                            # Match exato de álbum e artista
+                                            if (album.lower() in result_album or result_album in album.lower()) and \
+                                               (artist.lower() in result_artist or result_artist in artist.lower()):
+                                                best_match = result
+                                                self.logger.info(f"✓ Match encontrado: {result_artist} - {result_album}")
+                                                break
+
+                                        # Se não achou match exato, usa primeiro resultado
+                                        if not best_match and data['results']:
+                                            best_match = data['results'][0]
+                                            self.logger.debug(f"Usando primeiro resultado: {best_match.get('artistName')} - {best_match.get('collectionName')}")
+
+                                        # Extrai a URL do Apple Music da resposta
+                                        if best_match:
+                                            apple_music_url = best_match.get('collectionViewUrl', '')
+                                            if apple_music_url:
+                                                self.logger.info(f"🔗 URL do Apple Music: {apple_music_url}")
+                                    else:
+                                        # Não encontrou nada - sugere adicionar ao cache
+                                        self.logger.warning(f"⚠️  Álbum não encontrado na iTunes API: {artist} - {album}")
+                                        self.logger.info(f"💡 Dica: Adicione ao cache manualmente:")
+                                        self.logger.info(f"   Arquivo: {cache_file}")
+                                        self.logger.info(f"   Chave: \"{cache_key}\"")
+                                        self.logger.info(f"   Exemplo: \"{cache_key}\": \"https://music.apple.com/...\")")
 
                         # Se conseguimos a URL do Apple Music, tenta obter capa animada
                         if apple_music_url and apple_music_url != "":
